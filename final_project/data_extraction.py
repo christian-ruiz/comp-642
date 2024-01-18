@@ -1,5 +1,7 @@
 import yfinance as yf
 import pandas as pd
+from datetime import datetime
+from nasdaqtrader import NasdaqTrader
 
 def fetch_stock_data(symbol, start_date, end_date):
     # Fetch historical stock prices
@@ -41,10 +43,6 @@ print(financial_metrics)
 
 
 # get top 50 companies of the nasdaq
-import pandas as pd
-from datetime import datetime
-from nasdaqtrader import NasdaqTrader
-
 def get_top_nasdaq_companies(date, top_n=50):
     # Initialize NasdaqTrader
     nasdaq = NasdaqTrader()
