@@ -1,85 +1,43 @@
-import yfinance as yf
+import requests
+from io import BytesIO
+from zipfile import ZipFile
+import os
 import pandas as pd
-from datetime import datetime
-from nasdaqtrader import NasdaqTrader
 
-def fetch_stock_data(symbol, start_date, end_date):
-    # Fetch historical stock prices
-    stock_data = yf.download(symbol, start=start_date, end=end_date)
+def download_zip_and_extract(url, destination_folder):
+    # Make a request to the URL
+    response = requests.get(url)
 
-    # Calculate 200-day and 35-day moving averages
-    stock_data['200_MA'] = stock_data['Close'].rolling(window=200).mean()
-    stock_data['35_MA'] = stock_data['Close'].rolling(window=35).mean()
+    if response.status_code == 200:
+        # Create a ZipFile from the response content
+        with ZipFile(BytesIO(response.content)) as zipped_file:
+            # Extract all contents to the destination folder
+            zipped_file.extractall(destination_folder)
 
-    # Fetch financial data
-    info = yf.Ticker(symbol).info
-    financial_data = {
-        'Symbol': symbol,
-        'Revenues': info.get('revenueTTM', None),
-        'Earnings': info.get('earningsTTM', None),
-        'FutureGrowth': info.get('fiveYearAvgDividendYield', None),
-        'ReturnOnEquity': info.get('returnOnEquity', None),
-        'ProfitMargins': info.get('profitMargins', None),
-    }
+def download_tsv_from_folder(folder_path, tsv_filename):
+    # List all files in the folder
+    # files = os.listdir(folder_path)
 
-    # Convert financial data to DataFrame
-    financial_df = pd.DataFrame([financial_data])
+    # Find the TSV file in the list
+    # tsv_file = next((file for file in files if file.endswith('.tsv')), None)
 
-    return stock_data, financial_df
+    if tsv_filename:
+        # Read the TSV file using pandas
+        tsv_data = pd.read_csv(os.path.join(folder_path, tsv_filename), sep='\t')
+        return tsv_data
+    else:
+        print("No TSV file found in the folder.")
 
-# Example for a single company (AAPL)
-symbol = 'AAPL'
-start_date = '2013-01-01'
-end_date = '2023-01-01'
+# Example Usage:
+zip_url = "https://www.sec.gov/dera/data/form-13f/2023q3_form13f.zip"
+destination_folder = "/Users/christianruiz/Desktop/github/comp-642/final_project/hist_data/"
 
-stock_prices, financial_metrics = fetch_stock_data(symbol, start_date, end_date)
+# Download and extract the zip file
+download_zip_and_extract(zip_url, destination_folder)
 
-# Display the DataFrames
-print("Stock Prices:")
-print(stock_prices.head())
+# Download TSV from the extracted folder
+tsv_filename = "INFOTABLE.tsv"
+tsv_data = download_tsv_from_folder(destination_folder, tsv_filename)
 
-print("\nFinancial Metrics:")
-print(financial_metrics)
-
-
-# get top 50 companies of the nasdaq
-def get_top_nasdaq_companies(date, top_n=50):
-    # Initialize NasdaqTrader
-    nasdaq = NasdaqTrader()
-
-    # Get the list of top companies on NASDAQ at a specific date
-    top_nasdaq_companies = nasdaq.get_top_nasdaq_companies(date, top_n)
-
-    return top_nasdaq_companies
-
-def get_ticker_cusip_mapping(companies):
-    # Fetch additional details including CUSIP using the `yfinance` package
-    cusip_mapping = {}
-
-    for symbol in companies['Symbol']:
-        try:
-            company = yf.Ticker(symbol)
-            info = company.info
-            cusip = info.get('cusip', None)
-
-            cusip_mapping[symbol] = cusip
-        except Exception as e:
-            print(f"Error fetching data for {symbol}: {e}")
-
-    return cusip_mapping
-
-# Example: Get top 50 NASDAQ companies on a specific date
-target_date = datetime(2023, 1, 1)
-top_nasdaq_companies = get_top_nasdaq_companies(target_date)
-
-# Display the list of companies
-print("Top 50 NASDAQ Companies:")
-print(top_nasdaq_companies[['Symbol', 'Company Name']])
-
-# Get ticker-CUSIP mapping
-cusip_mapping = get_ticker_cusip_mapping(top_nasdaq_companies)
-
-# Display the Ticker-CUSIP mapping
-print("\nTicker-CUSIP Mapping:")
-for symbol, cusip in cusip_mapping.items():
-    print(f"{symbol}: {cusip}")
+# Now you can work with tsv_data
+print(tsv_data)
