@@ -14,7 +14,7 @@ import yfinance as yf
 import warnings
 warnings.filterwarnings('ignore')
 
-def yf_data_upload(start_date, end_date):
+def yf_data_upload(start_date, end_date, ticker_symbol):
     '''
     Call the yfinance and upload the required data. For our data requirements
     we will choose a start date of 2010-12-31 and an end date of 2024-02-29.
@@ -22,13 +22,14 @@ def yf_data_upload(start_date, end_date):
     Input:
         - start: string date in the format of yyyy-dd-mm for the start date of the data putll
         - end: string date in the format of yyyy-dd-mm for the end date of the data pull
+        - ticker_symbol: string value in all caps that will be used for the ticker in our analysis
     
     return: DataFrame of historical stock price data
     '''
     # fetching daily adjusted close price, volume, and percent changes
-    tqqq_price = yf.download('TQQQ', start=start_date, end=end_date, group_by='ticker')[['Adj Close', 'Volume']]
-    tqqq_price['tqqq_ret'] = tqqq_price['Adj Close'].pct_change()
-    tqqq_price.rename(columns={'Adj Close': 'tqqq_close', 'Volume': 'tqqq_volume'}, inplace=True)
+    equity_price = yf.download(ticker_symbol, start=start_date, end=end_date, group_by='ticker')[['Adj Close', 'Volume']]
+    equity_price[f'{ticker_symbol}_ret'] = equity_price['Adj Close'].pct_change()
+    equity_price.rename(columns={'Adj Close': f'{ticker_symbol}_close', 'Volume': f'{ticker_symbol}_volume'}, inplace=True)
 
     tbf_price = pd.DataFrame(yf.download('TBF', start=start_date, end=end_date)[['Adj Close', 'Volume']])
     tbf_price['tbf_ret'] = tbf_price['Adj Close'].pct_change()
@@ -55,7 +56,7 @@ def yf_data_upload(start_date, end_date):
     gld_price.rename(columns={'Adj Close': 'gld_close', 'Volume': 'gld_volume'}, inplace=True)
 
     # joining all data into a single dataframe according to the index (date)
-    df = pd.merge(tqqq_price, tbf_price, left_index=True, right_index=True)
+    df = pd.merge(equity_price, tbf_price, left_index=True, right_index=True)
     df = pd.merge(df, tip_price, left_index=True, right_index=True)
     df = pd.merge(df, uup_price, left_index=True, right_index=True)
     df = pd.merge(df, vixy_price, left_index=True, right_index=True)
@@ -66,55 +67,57 @@ def yf_data_upload(start_date, end_date):
     return df
 
 
-def feature_engineering(df):
+def feature_engineering(df, ticker_symbol):
     '''
     Creating required features that are fundamental in the investment process.
 
     Inputs:
         - DataFrame of historical stock price data.
+        - ticker_symbol: string value in all caps that will be used for the ticker in our analysis
 
-    return: DataFrame containing additional engineered features.
+    Return: DataFrame containing additional engineered features.
     '''
-    # feature engineering tqqq technical indicator data
+    # feature engineering {ticker_symbol} technical indicator data
     # 35-day EMA
-    df['tqqq_35_day_ema'] = df['tqqq_close'].ewm(span=35, adjust=False).mean()
+    df[f'{ticker_symbol}_35_day_ema'] = df[f'{ticker_symbol}_close'].ewm(span=35, adjust=False).mean()
 
     # Calculate 200-day SMA
-    df['tqqq_200_day_sma'] = df['tqqq_close'].rolling(window=200).mean()
+    df[f'{ticker_symbol}_200_day_sma'] = df[f'{ticker_symbol}_close'].rolling(window=200).mean()
 
     # Calculate MACD and MACD signal
-    df['tqqq_macd'] = df['tqqq_close'].ewm(span=12, adjust=False).mean() - df['tqqq_close'].ewm(span=26, adjust=False).mean()
-    df['tqqq_macd_signal'] = df['tqqq_macd'].ewm(span=9, adjust=False).mean()
+    df[f'{ticker_symbol}_macd'] = df[f'{ticker_symbol}_close'].ewm(span=12, adjust=False).mean() - df[f'{ticker_symbol}_close'].ewm(span=26, adjust=False).mean()
+    df[f'{ticker_symbol}_macd_signal'] = df[f'{ticker_symbol}_macd'].ewm(span=9, adjust=False).mean()
 
     # Calculate RSI
-    delta = df['tqqq_close'].diff()
+    delta = df[f'{ticker_symbol}_close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
-    df['tqqq_rsi'] = 100 - (100 / (1 + rs))
+    df[f'{ticker_symbol}_rsi'] = 100 - (100 / (1 + rs))
     df.fillna(0, inplace=True)
     
     return df
 
 
-def simulate_ret(df):
+def simulate_ret(df, ticker_symbol):
     '''
     Simulate the perfect investment strategy with already knowing future equity prices.
 
     Input:
         - df: DataFrame containing all stock price data.
+        - ticker_symbol: string value in all caps that will be used for the ticker in our analysis
 
-    return df DataFrame with the simulated returns and dependent variables.
+    Return: df DataFrame with the simulated returns and dependent variables.
     '''
 
     # buy, sell, hold decision variable
     df['decision'] = ''
 
-    # simulating cash position set to the starting price of tqqq
-    df['cash'] = df['tqqq_close'][0]
+    # simulating cash position set to the starting price of {ticker_symbol}
+    df['cash'] = df[f'{ticker_symbol}_close'][0]
 
     # daily return on cash, significant for shorts and if we need to add cumulative return at any point
-    df['cash_ret'] = df['tqqq_ret'][0]
+    df['cash_ret'] = df[f'{ticker_symbol}_ret'][0]
 
     # the initial number of days that we are set to hold a security, could be used as categorical at any point
     df['initial_hold_days'] = 1
@@ -140,11 +143,11 @@ def simulate_ret(df):
             
                 # determine how many days to hold for greatest return
                 hold_dict = {
-                    1: (df['tqqq_close'][idx+1]/df['tqqq_close'][idx])-1,
-                    3: (df['tqqq_close'][idx+3]/df['tqqq_close'][idx])-1,
-                    5: (df['tqqq_close'][idx+5]/df['tqqq_close'][idx])-1,
-                    10: (df['tqqq_close'][idx+10]/df['tqqq_close'][idx])-1,
-                    20: (df['tqqq_close'][idx+20]/df['tqqq_close'][idx])-1
+                    1: (df[f'{ticker_symbol}_close'][idx+1]/df[f'{ticker_symbol}_close'][idx])-1,
+                    3: (df[f'{ticker_symbol}_close'][idx+3]/df[f'{ticker_symbol}_close'][idx])-1,
+                    5: (df[f'{ticker_symbol}_close'][idx+5]/df[f'{ticker_symbol}_close'][idx])-1,
+                    10: (df[f'{ticker_symbol}_close'][idx+10]/df[f'{ticker_symbol}_close'][idx])-1,
+                    20: (df[f'{ticker_symbol}_close'][idx+20]/df[f'{ticker_symbol}_close'][idx])-1
                 }
 
                 # if all future values are negative, short the stock
@@ -157,7 +160,7 @@ def simulate_ret(df):
                         days_to_hold = min(hold_dict, key=hold_dict.get)
                         df['initial_hold_days'][idx] = days_to_hold
                         df['hold_countdown'][idx] = days_to_hold
-                        df['cash'][idx] = df['cash'][idx-1]*(1+(df['tqqq_ret'][idx]*-1))
+                        df['cash'][idx] = df['cash'][idx-1]*(1+(df[f'{ticker_symbol}_ret'][idx]*-1))
                         df['cash_ret'][idx] = (df['cash'][idx]/df['cash'][idx-1])-1
                         hold_type = 'short'
 
@@ -168,7 +171,7 @@ def simulate_ret(df):
                         days_to_hold = min(hold_dict, key=hold_dict.get)
                         df['initial_hold_days'][idx] = days_to_hold
                         df['hold_countdown'][idx] = days_to_hold
-                        df['cash'][idx] = df['cash'][idx-1]*(1+(df['tqqq_ret'][idx]))
+                        df['cash'][idx] = df['cash'][idx-1]*(1+(df[f'{ticker_symbol}_ret'][idx]))
                         df['cash_ret'][idx] = (df['cash'][idx]/df['cash'][idx-1])-1
                         hold_type = 'short'
 
@@ -181,7 +184,7 @@ def simulate_ret(df):
                         days_to_hold = max(hold_dict, key=hold_dict.get)
                         df['initial_hold_days'][idx] = days_to_hold
                         df['hold_countdown'][idx] = days_to_hold
-                        df['cash'][idx] = df['cash'][idx-1]*(1+(df['tqqq_ret'][idx]*-1))
+                        df['cash'][idx] = df['cash'][idx-1]*(1+(df[f'{ticker_symbol}_ret'][idx]*-1))
                         df['cash_ret'][idx] = (df['cash'][idx]/df['cash'][idx-1])-1
                         hold_type = 'long'
                     
@@ -191,7 +194,7 @@ def simulate_ret(df):
                         days_to_hold = max(hold_dict, key=hold_dict.get)
                         df['initial_hold_days'][idx] = days_to_hold
                         df['hold_countdown'][idx] = days_to_hold
-                        df['cash'][idx] = df['cash'][idx-1]*(1+(df['tqqq_ret'][idx]))
+                        df['cash'][idx] = df['cash'][idx-1]*(1+(df[f'{ticker_symbol}_ret'][idx]))
                         df['cash_ret'][idx] = (df['cash'][idx]/df['cash'][idx-1])-1
                         hold_type = 'long'
 
@@ -200,7 +203,7 @@ def simulate_ret(df):
                 # when a days_to_hold is decided - continue position until end of the hold days
                 if hold_type == 'long':
                     df['decision'][idx] = 'hold'
-                    df['cash'][idx] = df['cash'][idx-1]*(1+df['tqqq_ret'][idx])
+                    df['cash'][idx] = df['cash'][idx-1]*(1+df[f'{ticker_symbol}_ret'][idx])
                     df['cash_ret'][idx] = (df['cash'][idx]/df['cash'][idx-1])-1
                     days_to_hold -= 1
                     df['hold_countdown'][idx] = days_to_hold
@@ -208,7 +211,7 @@ def simulate_ret(df):
                     
                 elif hold_type == 'short':
                     df['decision'][idx] = 'hold'
-                    df['cash'][idx] = df['cash'][idx-1]*(1+(df['tqqq_ret'][idx]*-1)) 
+                    df['cash'][idx] = df['cash'][idx-1]*(1+(df[f'{ticker_symbol}_ret'][idx]*-1)) 
                     df['cash_ret'][idx] = (df['cash'][idx]/df['cash'][idx-1])-1
                     days_to_hold -= 1
                     df['hold_countdown'][idx] = days_to_hold
@@ -218,33 +221,64 @@ def simulate_ret(df):
             # when we get to the end of our dataframe hold our current position (long/short)
             if hold_type == 'long':
                 df['decision'][idx] = 'hold'
-                df['cash'][idx] = df['cash'][idx-1]*(1+df['tqqq_ret'][idx])
+                df['cash'][idx] = df['cash'][idx-1]*(1+df[f'{ticker_symbol}_ret'][idx])
                 df['cash_ret'][idx] = (df['cash'][idx]/df['cash'][idx-1])-1
                 df['hold_countdown'][idx] = 0
                 df['initial_hold_days'][idx] = df['initial_hold_days'][idx-1]
                 
             elif hold_type == 'short':
                 df['decision'][idx] = 'hold'
-                df['cash'][idx] = df['cash'][idx-1]*(1+(df['tqqq_ret'][idx]*-1))
+                df['cash'][idx] = df['cash'][idx-1]*(1+(df[f'{ticker_symbol}_ret'][idx]*-1))
                 df['cash_ret'][idx] = (df['cash'][idx]/df['cash'][idx-1])-1
                 df['hold_countdown'][idx] = 0
                 df['initial_hold_days'][idx] = df['initial_hold_days'][idx-1]
+    
+    # create future day close features
+    df[f'{ticker_symbol}_1_day_close'] = 0
+    df[f'{ticker_symbol}_3_day_close'] = 0
+    df[f'{ticker_symbol}_5_day_close'] = 0
+    df[f'{ticker_symbol}_10_day_close'] = 0
+    df[f'{ticker_symbol}_20_day_close'] = 0
+
+    # document future price values
+    for idx in range(len(df)):
+        if idx <= len(df)-21:
+
+            df[f'{ticker_symbol}_1_day_close'][idx] = df[f'{ticker_symbol}_close'][idx+1]
+            df[f'{ticker_symbol}_3_day_close'][idx] = df[f'{ticker_symbol}_close'][idx+3]
+            df[f'{ticker_symbol}_5_day_close'][idx] = df[f'{ticker_symbol}_close'][idx+5]
+            df[f'{ticker_symbol}_10_day_close'][idx] = df[f'{ticker_symbol}_close'][idx+10]
+            df[f'{ticker_symbol}_20_day_close'][idx] = df[f'{ticker_symbol}_close'][idx+20]
+        
+        else:
+            df[f'{ticker_symbol}_1_day_close'][idx] = 0
+            df[f'{ticker_symbol}_3_day_close'][idx] = 0
+            df[f'{ticker_symbol}_5_day_close'][idx] = 0
+            df[f'{ticker_symbol}_10_day_close'][idx] = 0
+            df[f'{ticker_symbol}_20_day_close'][idx] = 0
+
+    # will only return data that reports the beginning of the 200 day moving average and the last 20 days
+    df = df.iloc[199:-20]
+    df = df.reset_index(drop=True)
+
+    return df
 
 
 
 
-def execute_etl(start_date, end_date):
+def execute_etl(start_date, end_date, ticker_symbol):
     '''
     Execute the data extraction and features engineering functions
 
     Input:
         - start: string date in the format of yyyy-dd-mm for the start date of the data putll
         - end: string date in the format of yyyy-dd-mm for the end date of the data pull
+        - ticker_symbol: string value in all caps that will be used for the ticker in our analysis
     
-    return: DataFrame of historical stock price data 
+    Return: DataFrame of historical stock price data 
     '''
-    df = yf_data_upload(start_date, end_date)
-    df = feature_engineering(df)
-    df = simulate_ret(df)
+    df = yf_data_upload(start_date, end_date, ticker_symbol)
+    df = feature_engineering(df, ticker_symbol)
+    df = simulate_ret(df, ticker_symbol)
 
     return df
